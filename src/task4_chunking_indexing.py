@@ -167,7 +167,7 @@ def index_to_vectorstore(chunks: list[dict]):
         print(f"  Creating new collection: {collection_name}...")
         collection = client.collections.create(
             name=collection_name,
-            vectorizer_config=Configure.Vectorizer.none(),  # Tự truyền vector đã tính từ OpenAI
+            vector_config=Configure.Vectorizer.none(),  # Tự truyền vector đã tính từ OpenAI
             properties=[
                 Property(name="content", data_type=DataType.TEXT),
                 Property(name="source", data_type=DataType.TEXT),
