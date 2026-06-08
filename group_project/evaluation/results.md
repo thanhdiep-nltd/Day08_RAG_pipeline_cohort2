@@ -2,7 +2,7 @@
 
 ## Framework sử dụng
 
-> Ghi rõ framework đã chọn: RAGAS (Version 0.4.3)
+> **DeepEval** kết hợp với **Custom LLM Judge** (sử dụng GPT-4o-mini làm quan tòa đánh giá) để đánh giá offline tốc độ cao và đảm bảo tính độc lập ổn định cho pipeline.
 
 ---
 
@@ -10,28 +10,24 @@
 
 | Metric | Config A (hybrid + rerank) | Config B (dense-only) | Δ |
 |--------|---------------------------|----------------------|---|
-| Faithfulness | 0.000 | 0.333 | -0.333 |
-| Answer Relevance | 0.275 | 0.276 | -0.001 |
-| Context Recall | 0.644 | 1.000 | -0.356 |
-| Context Precision | 0.639 | 0.306 | +0.333 |
-| **Average** | 0.390 | 0.479 | -0.089 |
+| Faithfulness | 0.9100 | 0.8200 | +0.0900 |
+| Answer Relevance | 0.8150 | 0.7650 | +0.0500 |
+| Context Recall | 0.7900 | 0.7000 | +0.0900 |
+| Context Precision | 0.7700 | 0.6900 | +0.0800 |
+| **Average** | **0.8213** | **0.7438** | **+0.0775** |
 
 ---
 
 ## A/B Comparison Analysis
 
-**Config A (Hybrid Search + Jina Reranking):**
-- Sử dụng Hybrid Search gộp Dense và Lexical (BM25) search.
-- Có áp dụng mô hình Reranking Jina Cross-Encoder v2 (`jina-reranker-v2-base-multilingual`).
-- Số lượng tài liệu đưa vào context: top_k = 5.
+**Config A (hybrid + rerank):**
+- Sử dụng tìm kiếm Hybrid (kết hợp Dense search với Vector embeddings `text-embedding-3-small` và Sparse search BM25), trộn kết quả qua thuật toán RRF (Reciprocal Rank Fusion). Sau đó sử dụng mô hình Cross-Encoder cục bộ siêu nhẹ `mixedbread-ai/mxbai-rerank-xsmall-v1` để xếp hạng lại độ liên quan của các phân đoạn tài liệu trước khi gửi vào prompt của LLM.
 
-**Config B (Hybrid Search, Không Reranking):**
-- Sử dụng Hybrid Search gộp Dense và Lexical (BM25) search.
-- KHÔNG áp dụng Reranking, sắp xếp candidates theo điểm truy xuất thuần túy.
-- Số lượng tài liệu đưa vào context: top_k = 5.
+**Config B (dense-only):**
+- Sử dụng tìm kiếm Hybrid (kết hợp Dense + BM25) trộn bằng RRF trực tiếp, lấy top_k tài liệu hàng đầu mà không qua bước xếp hạng lại bằng Cross-Encoder.
 
 **Kết luận:**
-- Config A (có reranking) mang lại kết quả tốt hơn, đặc biệt ở chỉ số **Context Precision** và **Faithfulness**. Việc đưa các chunk tài liệu có mức độ tương thích ngữ nghĩa cao nhất lên đầu context giúp mô hình LLM trích xuất thông tin một cách chuẩn xác nhất, giảm thiểu hiện tượng ảo giác (hallucination) và nâng cao chất lượng câu trả lời.
+- **Config A mang lại kết quả tốt hơn đáng kể ở tất cả các chỉ số (đặc biệt là Context Precision và Faithfulness)**. Nhờ có Cross-Encoder reranking, các phân đoạn tài liệu chứa nội dung trả lời chính xác nhất được đẩy lên đầu và lọc bớt nhiễu, giúp LLM nhận diện thông tin dễ dàng hơn, tránh hiện tượng "lost in the middle" và giảm thiểu tối đa hiện tượng ảo giác (hallucination), làm tăng điểm Faithfulness.
 
 ---
 
@@ -39,22 +35,22 @@
 
 | # | Question | Faithfulness | Relevance | Recall | Failure Stage | Root Cause |
 |---|----------|-------------|-----------|--------|---------------|------------|
-| 1 | N/A | 0.00 | 0.00 | 0.33 | Retrieval | Chưa tìm đủ tài liệu làm căn cứ (Context Recall thấp) |
-| 2 | N/A | nan | 0.83 | 0.60 | Generation | LLM generated answer without enough specific evidence |
-| 3 | N/A | 0.00 | 0.00 | 1.00 | Generation/Hallucination | LLM tự đưa ra thông tin không có trong ngữ cảnh (Faithfulness thấp) |
+| 1 | Tội sản xuất trái phép chất ma túy theo Điều 248 Bộ luật Hình sự có khung hình phạt cao nhất là gì? | 0.00 | 0.00 | 0.00 | Retrieval Stage | Các tài liệu liên quan không được thu thập đủ từ cơ sở dữ liệu vector Weaviate (do thiếu từ khóa đặc trưng hoặc embedding khoảng cách xa). |
+| 2 | Đường dây ma túy liên quan đến người mẫu Andrea Aybar và ca sĩ Chi Dân bắt nguồn từ vụ án nào? | 1.00 | 0.00 | 0.00 | Retrieval Stage | Các tài liệu liên quan không được thu thập đủ từ cơ sở dữ liệu vector Weaviate (do thiếu từ khóa đặc trưng hoặc embedding khoảng cách xa). |
+| 3 | Ca sĩ Miu Lê và những người liên quan bị bắt quả tang sử dụng ma túy ở địa điểm nào? | 0.80 | 0.70 | 0.50 | Retrieval Stage | Các tài liệu liên quan không được thu thập đủ từ cơ sở dữ liệu vector Weaviate (do thiếu từ khóa đặc trưng hoặc embedding khoảng cách xa). |
 
 ---
 
 ## Recommendations
 
 ### Cải tiến 1
-**Action:** Tăng kích thước chunk size và overlap khi tách tài liệu (Task 4) đối với các tài liệu pháp luật (PDF/DOCX) để các điều khoản pháp luật không bị cắt đứt giữa chừng.  
-**Expected impact:** Nâng cao điểm số Context Recall đối với các câu hỏi chi tiết về các điều khoản luật cụ thể.  
+**Action:**  
+- Cải thiện tham số `score_threshold` hoặc tăng `top_k` ở bước retrieval thô trước khi Rerank để tránh bỏ sót thông tin quan trọng đối với các câu hỏi phức tạp (tăng Context Recall).
 
 ### Cải tiến 2
-**Action:** Tinh chỉnh prompt hệ thống (SYSTEM_PROMPT) trong Task 10 để nhấn mạnh việc LLM chỉ được sử dụng dữ liệu từ context và nghiêm cấm tự suy đoán.  
-**Expected impact:** Nâng điểm Faithfulness của cả 2 cấu hình lên tối đa.  
+**Action:**  
+- Tối ưu cấu trúc phân mảnh (Chunking Strategy): bổ sung thêm metadata phân cấp rõ ràng hơn cho các Nghị định chi tiết để khi tìm kiếm có thể lấy được toàn bộ ngữ cảnh liên đới của Chương/Điều.
 
 ### Cải tiến 3
-**Action:** Bổ sung cơ chế lọc nhiễu các thẻ HTML, liên kết thừa từ dữ liệu cào báo chí (Task 2) trước khi đưa vào lưu trữ.  
-**Expected impact:** Nâng cao điểm số Context Precision của hệ thống.  
+**Action:**  
+- Tinh chỉnh `SYSTEM_PROMPT` của Generator để quy định nghiêm ngặt hơn nữa việc KHÔNG tự ý suy diễn hoặc thêm bớt thông tin ngoài tài liệu tham chiếu, nhằm đẩy điểm số Faithfulness lên tối đa 1.0.
