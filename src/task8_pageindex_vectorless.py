@@ -92,7 +92,10 @@ def upload_documents():
                 raise RuntimeError(f"PageIndex document check failed: {doc_info}")
             status = doc_info.get("status")
             print(f"    - Status: {status}")
-            if status == "failed":
+            if status == "completed":
+                print("    - Status: completed!")
+                break
+            elif status == "failed":
                 raise RuntimeError("PageIndex xử lý tài liệu thất bại!")
             elif status not in ("queued", "processing"):
                 raise RuntimeError(f"PageIndex document check returned unexpected status: {status}")
@@ -168,11 +171,13 @@ def pageindex_search(query: str, top_k: int = 5) -> list[dict]:
     for node in retrieved_nodes:
         node_title = node.get("title", "")
         relevant_contents = node.get("relevant_contents", [])
-        for rc in relevant_contents:
-            text = rc.get("relevant_content", "")
-            page_index = rc.get("page_index", 0)
+        
+        def process_rc(rc_dict):
+            if not isinstance(rc_dict, dict):
+                return
+            text = rc_dict.get("relevant_content", "")
+            page_index = rc_dict.get("page_index", rc_dict.get("physical_index", 0))
             
-            # PageIndex không trả về điểm cosine, đặt điểm tương quan mặc định là 1.0
             results.append({
                 "content": text,
                 "score": 1.0,
@@ -183,6 +188,13 @@ def pageindex_search(query: str, top_k: int = 5) -> list[dict]:
                 },
                 "source": "pageindex"
             })
+
+        for rc_item in relevant_contents:
+            if isinstance(rc_item, list):
+                for sub_item in rc_item:
+                    process_rc(sub_item)
+            else:
+                process_rc(rc_item)
             
     return results[:top_k]
 
@@ -192,12 +204,17 @@ if __name__ == "__main__":
         print("⚠ Hãy set PAGEINDEX_API_KEY trong file .env")
         print("  Đăng ký tại: https://pageindex.ai/")
     else:
-        print("Uploading documents...")
         try:
-            upload_documents()
+            if not DOC_ID_CACHE_FILE.exists():
+                print("Uploading documents...")
+                upload_documents()
+            else:
+                print(f"Using cached doc_id: {DOC_ID_CACHE_FILE.read_text(encoding='utf-8').strip()}")
+
             print("\nTest query:")
             results = pageindex_search("hình phạt sử dụng ma tuý", top_k=3)
             for r in results:
-                print(f"[{r['score']:.3f}] {r['content'][:100]}...")
+                safe_content = r['content'][:100].encode("ascii", "replace").decode("ascii")
+                print(f"[{r['score']:.3f}] {safe_content}...")
         except Exception as e:
             print(f"[ERROR] PageIndex process failed: {e}")
