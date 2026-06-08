@@ -27,6 +27,12 @@ Cài đặt:
 """
 
 from pathlib import Path
+import os
+import json
+from dotenv import load_dotenv
+
+# Load .env từ thư mục gốc dự án
+load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
 STANDARDIZED_DIR = Path(__file__).parent.parent / "data" / "standardized"
 
@@ -35,16 +41,18 @@ STANDARDIZED_DIR = Path(__file__).parent.parent / "data" / "standardized"
 # CONFIGURATION — Giải thích lựa chọn của bạn trong comment
 # =============================================================================
 
-# TODO: Chọn chunking strategy và giải thích vì sao
-CHUNK_SIZE = 500        # Vì sao chọn 500? ...
-CHUNK_OVERLAP = 50      # Vì sao chọn 50? ...
+# Chọn chunking strategy: "recursive" để đảm bảo các chunk phân bổ đồng đều, giữ được câu nguyên vẹn.
+# Kích thước 800 ký tự (~200-250 từ) là độ dài tối ưu cho model text-embedding-3-small của OpenAI.
+# Overlap 100 ký tự để bảo toàn mối liên hệ ngữ cảnh giữa các chunk.
+CHUNK_SIZE = 800
+CHUNK_OVERLAP = 100
 CHUNKING_METHOD = "recursive"  # "recursive" | "markdown_header" | "semantic"
 
-# TODO: Chọn embedding model và giải thích
-EMBEDDING_MODEL = "BAAI/bge-m3"  # Vì sao? Multilingual, tốt cho tiếng Việt
-EMBEDDING_DIM = 1024
+# Chọn embedding model: OpenAI text-embedding-3-small (1536 dim) vì chất lượng tốt, chi phí API rẻ
+EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_DIM = 1536
 
-# TODO: Chọn vector store
+# Chọn vector store: Weaviate Cloud (Free Sandbox) hỗ trợ hybrid search tích hợp sẵn
 VECTOR_STORE = "weaviate"  # "weaviate" | "chromadb" | "faiss"
 
 
@@ -59,17 +67,19 @@ def load_documents() -> list[dict]:
     Returns:
         List of {'content': str, 'metadata': {'source': str, 'type': str}}
     """
-    # TODO: Iterate qua STANDARDIZED_DIR, đọc .md files
-    # documents = []
-    # for md_file in STANDARDIZED_DIR.rglob("*.md"):
-    #     content = md_file.read_text(encoding="utf-8")
-    #     doc_type = "legal" if "legal" in str(md_file) else "news"
-    #     documents.append({
-    #         "content": content,
-    #         "metadata": {"source": md_file.name, "type": doc_type}
-    #     })
-    # return documents
-    raise NotImplementedError("Implement load_documents")
+    documents = []
+    if not STANDARDIZED_DIR.exists():
+        print(f"  [ERROR] Standardized directory not found: {STANDARDIZED_DIR}")
+        return documents
+
+    for md_file in STANDARDIZED_DIR.rglob("*.md"):
+        content = md_file.read_text(encoding="utf-8")
+        doc_type = "legal" if "legal" in str(md_file.parent) else "news"
+        documents.append({
+            "content": content,
+            "metadata": {"source": md_file.name, "type": doc_type}
+        })
+    return documents
 
 
 def chunk_documents(documents: list[dict]) -> list[dict]:
@@ -79,26 +89,22 @@ def chunk_documents(documents: list[dict]) -> list[dict]:
     Returns:
         List of {'content': str, 'metadata': dict} — mỗi item là 1 chunk
     """
-    # TODO: Implement chunking
-    #
-    # Ví dụ với RecursiveCharacterTextSplitter:
-    # from langchain_text_splitters import RecursiveCharacterTextSplitter
-    #
-    # splitter = RecursiveCharacterTextSplitter(
-    #     chunk_size=CHUNK_SIZE,
-    #     chunk_overlap=CHUNK_OVERLAP,
-    #     separators=["\n\n", "\n", ". ", " ", ""]
-    # )
-    # chunks = []
-    # for doc in documents:
-    #     splits = splitter.split_text(doc["content"])
-    #     for i, chunk_text in enumerate(splits):
-    #         chunks.append({
-    #             "content": chunk_text,
-    #             "metadata": {**doc["metadata"], "chunk_index": i}
-    #         })
-    # return chunks
-    raise NotImplementedError("Implement chunk_documents")
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+        separators=["\n\n", "\n", ". ", " ", ""]
+    )
+    chunks = []
+    for doc in documents:
+        splits = splitter.split_text(doc["content"])
+        for i, chunk_text in enumerate(splits):
+            chunks.append({
+                "content": chunk_text,
+                "metadata": {**doc["metadata"], "chunk_index": i}
+            })
+    return chunks
 
 
 def embed_chunks(chunks: list[dict]) -> list[dict]:
@@ -108,51 +114,88 @@ def embed_chunks(chunks: list[dict]) -> list[dict]:
     Returns:
         Mỗi chunk dict được thêm key 'embedding': list[float]
     """
-    # TODO: Implement embedding
-    #
-    # Ví dụ với sentence-transformers:
-    # from sentence_transformers import SentenceTransformer
-    #
-    # model = SentenceTransformer(EMBEDDING_MODEL)
-    # texts = [c["content"] for c in chunks]
-    # embeddings = model.encode(texts, show_progress_bar=True)
-    # for chunk, emb in zip(chunks, embeddings):
-    #     chunk["embedding"] = emb.tolist()
-    # return chunks
-    raise NotImplementedError("Implement embed_chunks")
+    from openai import OpenAI
+
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    texts = [c["content"] for c in chunks]
+
+    print(f"  Generating embeddings for {len(texts)} chunks using {EMBEDDING_MODEL}...")
+    
+    # Chia batch 100 để tránh lỗi giới hạn hoặc tối ưu tốc độ gọi API
+    batch_size = 100
+    embeddings = []
+    for i in range(0, len(texts), batch_size):
+        batch_texts = texts[i : i + batch_size]
+        response = client.embeddings.create(
+            model=EMBEDDING_MODEL,
+            input=batch_texts
+        )
+        embeddings.extend([item.embedding for item in response.data])
+
+    for chunk, emb in zip(chunks, embeddings):
+        chunk["embedding"] = emb
+
+    return chunks
 
 
 def index_to_vectorstore(chunks: list[dict]):
     """
     Lưu chunks vào vector store đã chọn.
     """
-    # TODO: Implement indexing
-    #
-    # Ví dụ với Weaviate:
-    # import weaviate
-    # from weaviate.classes.config import Configure, Property, DataType
-    #
-    # client = weaviate.connect_to_local()  # hoặc connect_to_weaviate_cloud()
-    #
-    # # Tạo collection
-    # collection = client.collections.create(
-    #     name="DrugLawDocs",
-    #     vectorizer_config=Configure.Vectorizer.none(),
-    #     properties=[
-    #         Property(name="content", data_type=DataType.TEXT),
-    #         Property(name="source", data_type=DataType.TEXT),
-    #         Property(name="doc_type", data_type=DataType.TEXT),
-    #     ]
-    # )
-    #
-    # # Insert chunks
-    # with collection.batch.dynamic() as batch:
-    #     for chunk in chunks:
-    #         batch.add_object(
-    #             properties={"content": chunk["content"], ...},
-    #             vector=chunk["embedding"]
-    #         )
-    raise NotImplementedError("Implement index_to_vectorstore")
+    import weaviate
+    from weaviate.classes.config import Property, DataType, Configure
+
+    weaviate_url = os.getenv("WEAVIATE_URL")
+    weaviate_key = os.getenv("WEAVIATE_API_KEY")
+
+    if not weaviate_url or not weaviate_key:
+        raise ValueError("Thiếu WEAVIATE_URL hoặc WEAVIATE_API_KEY trong file .env!")
+
+    print(f"  Connecting to Weaviate Cloud at {weaviate_url}...")
+    
+    with weaviate.connect_to_weaviate_cloud(
+        cluster_url=weaviate_url,
+        auth_credentials=weaviate.auth.AuthApiKey(weaviate_key)
+    ) as client:
+        collection_name = "DrugLawDocs"
+
+        # Khởi tạo/Làm sạch collection
+        if client.collections.exists(collection_name):
+            print(f"  Cleaning existing collection: {collection_name}...")
+            client.collections.delete(collection_name)
+
+        print(f"  Creating new collection: {collection_name}...")
+        collection = client.collections.create(
+            name=collection_name,
+            vectorizer_config=Configure.Vectorizer.none(),  # Tự truyền vector đã tính từ OpenAI
+            properties=[
+                Property(name="content", data_type=DataType.TEXT),
+                Property(name="source", data_type=DataType.TEXT),
+                Property(name="doc_type", data_type=DataType.TEXT),
+                Property(name="chunk_index", data_type=DataType.INT),
+            ]
+        )
+
+        # Ghi hàng loạt (batch insert) lên Cloud
+        print(f"  Uploading {len(chunks)} chunks to Weaviate Cloud...")
+        with collection.batch.dynamic() as batch:
+            for chunk in chunks:
+                batch.add_object(
+                    properties={
+                        "content": chunk["content"],
+                        "source": chunk["metadata"]["source"],
+                        "doc_type": chunk["metadata"]["type"],
+                        "chunk_index": chunk["metadata"]["chunk_index"],
+                    },
+                    vector=chunk["embedding"]
+                )
+
+        if collection.batch.failed_objects:
+            print(f"  [ERROR] Failed to insert {len(collection.batch.failed_objects)} objects")
+            for failed in collection.batch.failed_objects:
+                print(f"    - Error message: {failed.message}")
+        else:
+            print(f"  [OK] Successfully indexed all {len(chunks)} chunks to collection '{collection_name}' on Weaviate Cloud.")
 
 
 def run_pipeline():
@@ -165,16 +208,16 @@ def run_pipeline():
     print("=" * 50)
 
     docs = load_documents()
-    print(f"\n✓ Loaded {len(docs)} documents")
+    print(f"\n[OK] Loaded {len(docs)} documents")
 
     chunks = chunk_documents(docs)
-    print(f"✓ Created {len(chunks)} chunks")
+    print(f"[OK] Created {len(chunks)} chunks")
 
     chunks = embed_chunks(chunks)
-    print(f"✓ Embedded {len(chunks)} chunks")
+    print(f"[OK] Embedded {len(chunks)} chunks")
 
     index_to_vectorstore(chunks)
-    print("✓ Indexed to vector store")
+    print("[OK] Finished Task 4 pipeline execution.")
 
 
 if __name__ == "__main__":
