@@ -17,8 +17,42 @@ BM25 hoạt động thế nào:
 
 from pathlib import Path
 
-# TODO: Load corpus từ data/standardized/ hoặc từ vector store
+import string
+import re
+from pathlib import Path
+
+# Load corpus từ data/standardized/ hoặc từ vector store
 CORPUS: list[dict] = []  # List of {'content': str, 'metadata': dict}
+
+_BM25_INDEX = None
+
+
+def load_corpus_if_empty():
+    """Tải dữ liệu từ thư mục standardized và phân mảnh (chunking) nếu CORPUS chưa được nạp."""
+    global CORPUS
+    if not CORPUS:
+        try:
+            # Ưu tiên import dạng package đầy đủ từ root
+            from src.task4_chunking_indexing import load_documents, chunk_documents
+            docs = load_documents()
+            CORPUS.extend(chunk_documents(docs))
+        except ImportError:
+            # Fallback nếu chạy trực tiếp script hoặc chạy từ thư mục src/
+            import sys
+            src_dir = Path(__file__).parent
+            if str(src_dir) not in sys.path:
+                sys.path.append(str(src_dir))
+            from task4_chunking_indexing import load_documents, chunk_documents
+            docs = load_documents()
+            CORPUS.extend(chunk_documents(docs))
+
+
+def tokenize(text: str) -> list[str]:
+    """Tokenize văn bản (chuyển chữ thường, bỏ dấu câu và phân tách bằng khoảng trắng)."""
+    text = text.lower()
+    # Loại bỏ các ký tự dấu câu
+    text = re.sub(f"[{re.escape(string.punctuation)}]", " ", text)
+    return text.split()
 
 
 def build_bm25_index(corpus: list[dict]):
@@ -28,15 +62,16 @@ def build_bm25_index(corpus: list[dict]):
     Args:
         corpus: List of {'content': str, 'metadata': dict}
     """
-    # TODO: Implement BM25 index
-    #
-    # from rank_bm25 import BM25Okapi
-    #
-    # # Tokenize - cho tiếng Việt nên dùng underthesea hoặc đơn giản split()
-    # tokenized_corpus = [doc["content"].lower().split() for doc in corpus]
-    # bm25 = BM25Okapi(tokenized_corpus)
-    # return bm25
-    raise NotImplementedError("Implement build_bm25_index")
+    from rank_bm25 import BM25Okapi
+    tokenized_corpus = [tokenize(doc["content"]) for doc in corpus]
+    return BM25Okapi(tokenized_corpus)
+
+
+def get_bm25_index():
+    global _BM25_INDEX
+    if _BM25_INDEX is None:
+        _BM25_INDEX = build_bm25_index(CORPUS)
+    return _BM25_INDEX
 
 
 def lexical_search(query: str, top_k: int = 10) -> list[dict]:
@@ -55,29 +90,41 @@ def lexical_search(query: str, top_k: int = 10) -> list[dict]:
         }
         Sorted by score descending.
     """
-    # TODO: Implement lexical search
-    #
-    # tokenized_query = query.lower().split()
-    # scores = bm25.get_scores(tokenized_query)
-    #
-    # # Get top_k indices
-    # import numpy as np
-    # top_indices = np.argsort(scores)[::-1][:top_k]
-    #
-    # results = []
-    # for idx in top_indices:
-    #     if scores[idx] > 0:
-    #         results.append({
-    #             "content": CORPUS[idx]["content"],
-    #             "score": float(scores[idx]),
-    #             "metadata": CORPUS[idx]["metadata"]
-    #         })
-    # return results
-    raise NotImplementedError("Implement lexical_search")
+    load_corpus_if_empty()
+    if not CORPUS:
+        return []
+
+    bm25 = get_bm25_index()
+    tokenized_query = tokenize(query)
+    
+    # Tính điểm BM25 cho các tài liệu
+    scores = bm25.get_scores(tokenized_query)
+    
+    # Lấy các index được sắp xếp giảm dần theo điểm số
+    import numpy as np
+    top_indices = np.argsort(scores)[::-1]
+    
+    results = []
+    for idx in top_indices:
+        if scores[idx] > 0:
+            results.append({
+                "content": CORPUS[idx]["content"],
+                "score": float(scores[idx]),
+                "metadata": CORPUS[idx]["metadata"]
+            })
+            
+    return results[:top_k]
 
 
 if __name__ == "__main__":
     # Test
+    print("=" * 50)
+    print("Testing Lexical Search (BM25)...")
+    print("=" * 50)
     results = lexical_search("Điều 248 tàng trữ trái phép chất ma tuý", top_k=5)
-    for r in results:
-        print(f"[{r['score']:.3f}] {r['content'][:100]}...")
+    for i, r in enumerate(results, 1):
+        # Tránh UnicodeEncodeError khi chạy trên CMD của Windows
+        safe_content = r['content'][:120].encode("ascii", "replace").decode("ascii")
+        print(f"{i}. [{r['score']:.3f}] (Source: {r['metadata']['source']})")
+        print(f"   Content: {safe_content}...")
+        print("-" * 50)

@@ -9,14 +9,21 @@ Chọn 1 trong các phương pháp:
 Nếu dùng MMR hoặc RRF, đảm bảo hiểu và giải thích được cơ chế.
 """
 
+import os
+import requests
+from pathlib import Path
+from dotenv import load_dotenv
 from typing import Optional
+
+# Load environment variables
+load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
 
 def rerank_cross_encoder(
     query: str, candidates: list[dict], top_k: int = 5
 ) -> list[dict]:
     """
-    Rerank candidates sử dụng cross-encoder model.
+    Rerank candidates sử dụng cross-encoder model (Jina Reranker v2).
 
     Args:
         query: Câu truy vấn
@@ -26,30 +33,44 @@ def rerank_cross_encoder(
     Returns:
         List of top_k candidates, re-scored và sorted by rerank_score descending.
     """
-    # TODO: Implement cross-encoder reranking
-    #
-    # Option A: Jina Reranker API
-    # import requests
-    # response = requests.post(
-    #     "https://api.jina.ai/v1/rerank",
-    #     headers={"Authorization": f"Bearer {JINA_API_KEY}"},
-    #     json={
-    #         "model": "jina-reranker-v2-base-multilingual",
-    #         "query": query,
-    #         "documents": [c["content"] for c in candidates],
-    #         "top_n": top_k
-    #     }
-    # )
-    # reranked = response.json()["results"]
-    # return [
-    #     {**candidates[r["index"]], "score": r["relevance_score"]}
-    #     for r in reranked
-    # ]
-    #
-    # Option B: Local model (Qwen3-Reranker)
-    # from transformers import AutoModelForSequenceClassification, AutoTokenizer
-    # ...
-    raise NotImplementedError("Implement rerank_cross_encoder")
+    if not candidates:
+        return []
+
+    jina_key = os.getenv("JINA_API_KEY")
+    if not jina_key:
+        raise ValueError("JINA_API_KEY is missing from environment variables.")
+
+    # Gọi API Jina Reranker v2
+    response = requests.post(
+        "https://api.jina.ai/v1/rerank",
+        headers={"Authorization": f"Bearer {jina_key}"},
+        json={
+            "model": "jina-reranker-v2-base-multilingual",
+            "query": query,
+            "documents": [c["content"] for c in candidates],
+            "top_n": top_k
+        }
+    )
+
+    if response.status_code != 200:
+        raise RuntimeError(f"Jina Reranker API error (status {response.status_code}): {response.text}")
+
+    response_data = response.json()
+    if "results" not in response_data:
+        raise RuntimeError(f"Invalid response format from Jina Reranker: {response_data}")
+
+    reranked = response_data["results"]
+
+    results = []
+    for r in reranked:
+        idx = r["index"]
+        candidate_copy = candidates[idx].copy()
+        candidate_copy["score"] = float(r["relevance_score"])
+        results.append(candidate_copy)
+
+    # Đảm bảo sắp xếp giảm dần theo score
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results
 
 
 def rerank_mmr(
