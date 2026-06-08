@@ -12,10 +12,16 @@ Logic:
     5. Return top_k results
 """
 
-from .task5_semantic_search import semantic_search
-from .task6_lexical_search import lexical_search
-from .task7_reranking import rerank, rerank_rrf
-from .task8_pageindex_vectorless import pageindex_search
+try:
+    from .task5_semantic_search import semantic_search
+    from .task6_lexical_search import lexical_search
+    from .task7_reranking import rerank
+    from .task8_pageindex_vectorless import pageindex_search
+except ImportError:
+    from task5_semantic_search import semantic_search
+    from task6_lexical_search import lexical_search
+    from task7_reranking import rerank
+    from task8_pageindex_vectorless import pageindex_search
 
 
 # =============================================================================
@@ -41,7 +47,7 @@ def retrieve(
           ├→ Semantic Search → results_dense
           ├→ Lexical Search  → results_sparse
           │
-          ├→ Merge (RRF) → merged_results
+          ├→ Merge (Union/Weighted Score) → merged_results
           ├→ Rerank → reranked_results
           │
           └→ If best_score < threshold:
@@ -61,35 +67,69 @@ def retrieve(
             'source': str  # 'hybrid' hoặc 'pageindex'
         }
     """
-    # TODO: Implement full retrieval pipeline
-    #
-    # Step 1: Song song chạy semantic + lexical
-    # dense_results = semantic_search(query, top_k=top_k * 2)
-    # sparse_results = lexical_search(query, top_k=top_k * 2)
-    #
-    # Step 2: Merge bằng RRF
-    # merged = rerank_rrf([dense_results, sparse_results], top_k=top_k * 2)
-    # for item in merged:
-    #     item["source"] = "hybrid"
-    #
-    # Step 3: Rerank
-    # if use_reranking and merged:
-    #     final_results = rerank(query, merged, top_k=top_k, method=RERANK_METHOD)
-    # else:
-    #     final_results = merged[:top_k]
-    #
-    # Step 4: Check threshold → fallback
-    # if not final_results or final_results[0]["score"] < score_threshold:
-    #     print(f"  ⚠ Hybrid score ({final_results[0]['score']:.3f} if final_results else 0}) "
-    #           f"< threshold ({score_threshold}). Fallback → PageIndex")
-    #     fallback = pageindex_search(query, top_k=top_k)
-    #     return fallback
-    #
-    # return final_results[:top_k]
-    raise NotImplementedError("Implement retrieve")
+    # Bước 1: Chạy semantic_search và lexical_search
+    try:
+        dense_results = semantic_search(query, top_k=top_k * 2)
+    except Exception as e:
+        print(f"  [WARNING] Semantic search failed: {e}")
+        dense_results = []
+
+    try:
+        sparse_results = lexical_search(query, top_k=top_k * 2)
+    except Exception as e:
+        print(f"  [WARNING] Lexical search failed: {e}")
+        sparse_results = []
+
+    # Bước 2: Gộp kết quả loại bỏ trùng lặp và lấy score lớn nhất
+    merged_map = {}
+    for item in dense_results + sparse_results:
+        content = item["content"]
+        if content not in merged_map:
+            merged_map[content] = item.copy()
+        else:
+            if item["score"] > merged_map[content]["score"]:
+                merged_map[content]["score"] = item["score"]
+
+    merged = list(merged_map.values())
+    for item in merged:
+        item["source"] = "hybrid"
+
+    # Bước 3: Áp dụng rerank
+    if use_reranking and merged:
+        try:
+            final_results = rerank(query, merged, top_k=top_k, method=RERANK_METHOD)
+        except Exception as e:
+            print(f"  [WARNING] Reranking failed: {e}. Fallback to sorting by retrieval scores.")
+            merged.sort(key=lambda x: x["score"], reverse=True)
+            final_results = merged[:top_k]
+    else:
+        merged.sort(key=lambda x: x["score"], reverse=True)
+        final_results = merged[:top_k]
+
+    # Đảm bảo trường source được gán đúng
+    for item in final_results:
+        item["source"] = "hybrid"
+
+    # Bước 4: Kiểm tra ngưỡng score để chuyển hướng fallback PageIndex
+    best_score = final_results[0]["score"] if final_results else 0.0
+    if not final_results or best_score < score_threshold:
+        print(f"  [INFO] Hybrid score ({best_score:.3f}) < threshold ({score_threshold}). Fallback -> PageIndex")
+        try:
+            fallback = pageindex_search(query, top_k=top_k)
+            if fallback:
+                return fallback
+        except Exception as e:
+            print(f"  [WARNING] PageIndex search failed or skipped: {e}")
+
+    return final_results
 
 
 if __name__ == "__main__":
+    import sys
+    # Reconfigure stdout to use utf-8 to avoid UnicodeEncodeError on Windows
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+
     test_queries = [
         "Hình phạt cho tội tàng trữ trái phép chất ma tuý",
         "Nghệ sĩ nào bị bắt vì sử dụng ma tuý năm 2024",

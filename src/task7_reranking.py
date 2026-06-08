@@ -41,36 +41,43 @@ def rerank_cross_encoder(
         raise ValueError("JINA_API_KEY is missing from environment variables.")
 
     # Gọi API Jina Reranker v2
-    response = requests.post(
-        "https://api.jina.ai/v1/rerank",
-        headers={"Authorization": f"Bearer {jina_key}"},
-        json={
-            "model": "jina-reranker-v2-base-multilingual",
-            "query": query,
-            "documents": [c["content"] for c in candidates],
-            "top_n": top_k
-        }
-    )
+    try:
+        response = requests.post(
+            "https://api.jina.ai/v1/rerank",
+            headers={"Authorization": f"Bearer {jina_key}"},
+            json={
+                "model": "jina-reranker-v2-base-multilingual",
+                "query": query,
+                "documents": [c["content"] for c in candidates],
+                "top_n": top_k
+            },
+            timeout=15
+        )
+        if response.status_code != 200:
+            print(f"  [WARNING] Jina Reranker API error (status {response.status_code}): {response.text}. Fallback to sorting by retrieval scores.")
+            sorted_candidates = sorted(candidates, key=lambda x: x.get("score", 0.0), reverse=True)
+            return sorted_candidates[:top_k]
 
-    if response.status_code != 200:
-        raise RuntimeError(f"Jina Reranker API error (status {response.status_code}): {response.text}")
+        response_data = response.json()
+        if "results" not in response_data:
+            print(f"  [WARNING] Invalid response format from Jina Reranker: {response_data}. Fallback to sorting by retrieval scores.")
+            sorted_candidates = sorted(candidates, key=lambda x: x.get("score", 0.0), reverse=True)
+            return sorted_candidates[:top_k]
 
-    response_data = response.json()
-    if "results" not in response_data:
-        raise RuntimeError(f"Invalid response format from Jina Reranker: {response_data}")
+        reranked = response_data["results"]
+        results = []
+        for r in reranked:
+            idx = r["index"]
+            candidate_copy = candidates[idx].copy()
+            candidate_copy["score"] = float(r["relevance_score"])
+            results.append(candidate_copy)
 
-    reranked = response_data["results"]
-
-    results = []
-    for r in reranked:
-        idx = r["index"]
-        candidate_copy = candidates[idx].copy()
-        candidate_copy["score"] = float(r["relevance_score"])
-        results.append(candidate_copy)
-
-    # Đảm bảo sắp xếp giảm dần theo score
-    results.sort(key=lambda x: x["score"], reverse=True)
-    return results
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results
+    except Exception as e:
+        print(f"  [WARNING] Jina Reranker exception: {e}. Fallback to sorting by retrieval scores.")
+        sorted_candidates = sorted(candidates, key=lambda x: x.get("score", 0.0), reverse=True)
+        return sorted_candidates[:top_k]
 
 
 def rerank_mmr(
