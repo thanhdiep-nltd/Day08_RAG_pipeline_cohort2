@@ -10,6 +10,17 @@ Yêu cầu:
 """
 
 
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+from openai import OpenAI
+import weaviate
+from weaviate.classes.query import MetadataQuery
+
+# Load environment variables
+load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
+
+
 def semantic_search(query: str, top_k: int = 10) -> list[dict]:
     """
     Tìm kiếm ngữ nghĩa sử dụng vector similarity.
@@ -26,41 +37,75 @@ def semantic_search(query: str, top_k: int = 10) -> list[dict]:
         }
         Sorted by score descending.
     """
-    # TODO: Implement semantic search
-    #
-    # Bước 1: Embed query bằng cùng model ở Task 4
+    # Bước 1: Embed query bằng cùng model ở Task 4 (text-embedding-3-small)
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if not openai_key:
+        raise ValueError("OPENAI_API_KEY is missing from environment variables.")
+
+    openai_client = OpenAI(api_key=openai_key)
+    response = openai_client.embeddings.create(
+        model="text-embedding-3-small",
+        input=[query]
+    )
+    query_embedding = response.data[0].embedding
+
     # Bước 2: Query vector store (cosine similarity)
-    # Bước 3: Return top_k results
-    #
-    # Ví dụ với Weaviate:
-    # import weaviate
-    # from sentence_transformers import SentenceTransformer
-    #
-    # model = SentenceTransformer("BAAI/bge-m3")
-    # query_embedding = model.encode(query).tolist()
-    #
-    # client = weaviate.connect_to_local()
-    # collection = client.collections.get("DrugLawDocs")
-    #
-    # results = collection.query.near_vector(
-    #     near_vector=query_embedding,
-    #     limit=top_k,
-    #     return_metadata=MetadataQuery(distance=True)
-    # )
-    #
-    # return [
-    #     {
-    #         "content": obj.properties["content"],
-    #         "score": 1 - obj.metadata.distance,  # distance → similarity
-    #         "metadata": {"source": obj.properties["source"], ...}
-    #     }
-    #     for obj in results.objects
-    # ]
-    raise NotImplementedError("Implement semantic_search")
+    weaviate_url = os.getenv("WEAVIATE_URL")
+    weaviate_key = os.getenv("WEAVIATE_API_KEY")
+    if not weaviate_url or not weaviate_key:
+        raise ValueError("WEAVIATE_URL or WEAVIATE_API_KEY is missing from environment variables.")
+
+    results_list = []
+    with weaviate.connect_to_weaviate_cloud(
+        cluster_url=weaviate_url,
+        auth_credentials=weaviate.auth.AuthApiKey(weaviate_key),
+        skip_init_checks=True
+    ) as client:
+        collection_name = "DrugLawDocs"
+        if not client.collections.exists(collection_name):
+            print(f"  [WARNING] Collection '{collection_name}' does not exist on Weaviate.")
+            return []
+
+        collection = client.collections.get(collection_name)
+        results = collection.query.near_vector(
+            near_vector=query_embedding,
+            limit=top_k,
+            return_metadata=MetadataQuery(distance=True)
+        )
+
+        # Bước 3: Return top_k results có tính score từ distance
+        for obj in results.objects:
+            # Weaviate distance defaults to cosine distance for cosine metric
+            # Cosine similarity = 1 - cosine distance
+            distance = obj.metadata.distance if obj.metadata and obj.metadata.distance is not None else 0.0
+            score = 1.0 - distance
+
+            results_list.append({
+                "content": obj.properties.get("content", ""),
+                "score": float(score),
+                "metadata": {
+                    "source": obj.properties.get("source", ""),
+                    "doc_type": obj.properties.get("doc_type", ""),
+                    "chunk_index": int(obj.properties.get("chunk_index", 0))
+                }
+            })
+
+    # Đảm bảo kết quả được sắp xếp giảm dần theo điểm tương đồng
+    results_list.sort(key=lambda x: x["score"], reverse=True)
+    return results_list
 
 
 if __name__ == "__main__":
     # Test
-    results = semantic_search("hình phạt cho tội tàng trữ ma tuý", top_k=5)
-    for r in results:
-        print(f"[{r['score']:.3f}] {r['content'][:100]}...")
+    print("=" * 50)
+    print("Testing Semantic Search...")
+    print("=" * 50)
+    results = semantic_search("dùng nhánh tỏi để đuổi ma", top_k=5)
+    for i, r in enumerate(results, 1):
+        source = r['metadata']['source']
+        chunk_index = r['metadata']['chunk_index']
+        print(f"{i}. [{r['score']:.4f}] ({source} - Index: {chunk_index})")
+        # Chuyển sang ký tự an toàn để in ra màn hình console Windows
+        safe_content = r['content'][:150].encode("ascii", "replace").decode("ascii")
+        print(f"   Content: {safe_content}...")
+        print("-" * 50)

@@ -155,7 +155,8 @@ def index_to_vectorstore(chunks: list[dict]):
     
     with weaviate.connect_to_weaviate_cloud(
         cluster_url=weaviate_url,
-        auth_credentials=weaviate.auth.AuthApiKey(weaviate_key)
+        auth_credentials=weaviate.auth.AuthApiKey(weaviate_key),
+        skip_init_checks=True
     ) as client:
         collection_name = "DrugLawDocs"
 
@@ -167,7 +168,7 @@ def index_to_vectorstore(chunks: list[dict]):
         print(f"  Creating new collection: {collection_name}...")
         collection = client.collections.create(
             name=collection_name,
-            vector_config=Configure.Vectorizer.none(),  # Tự truyền vector đã tính từ OpenAI
+            vector_config=Configure.Vectors.self_provided(),  # Tự truyền vector đã tính từ OpenAI (v4 compliant)
             properties=[
                 Property(name="content", data_type=DataType.TEXT),
                 Property(name="source", data_type=DataType.TEXT),

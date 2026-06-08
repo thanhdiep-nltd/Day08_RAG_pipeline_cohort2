@@ -26,14 +26,13 @@ def setup_directory():
 
 # TODO: Điền danh sách URL bài báo cần crawl
 ARTICLE_URLS = [
-    "https://tuoitre.vn/rapper-binh-gold-duong-tinh-ma-tuy-khi-lai-xe-co-dau-hieu-gay-roi-trat-tu-cong-cong-20250724080230866.htm",
+    "https://vnexpress.net/ca-si-long-nhat-son-ngoc-minh-bi-bat-vi-lien-quan-ma-tuy-5060857.html",
     "https://vnexpress.net/ca-si-miu-le-bi-bat-voi-cao-buoc-to-chuc-su-dung-ma-tuy-5074769.html",
-    "https://tienphong.vn/hanh-trinh-phe-ma-tuy-roi-giet-nguoi-cua-ca-si-chau-viet-cuong-post1095287.tpo",
-    "https://thanhnien.vn/dien-vien-huu-tin-nghien-ma-tuy-gan-3-nam-moi-ban-ve-nha-su-dung-thuoc-lac-1851517030.htm",
+    "https://vnexpress.net/anh-em-ca-si-chi-dan-ru-nhieu-nguoi-choi-ma-tuy-nhu-the-nao-4929804.html",
+    "https://vnexpress.net/nguoi-mau-andrea-aybar-cung-tro-ly-lam-tiec-ma-tuy-trong-can-ho-cao-cap-5059429.html",
     "https://vnexpress.net/dien-vien-le-hang-bi-dieu-tra-mua-ban-ma-tuy-4597048.html",
-    "https://vtv.vn/phap-luat/ca-si-chu-bin-bi-bat-vi-lien-quan-ma-tuy-20240607115007528.htm",
-    "https://baovephapluat.vn/cong-to-kiem-sat-tu-phap/truy-to/truy-to-ca-si-chi-dan-va-226-bi-can-trong-vu-an-ma-tuy-lien-quan-den-tiep-vien-hang-khong-196299.html",
-    "https://thanhnien.vn/ntk-nguyen-cong-tri-bi-bat-vi-ma-tuy-dung-khoa-lap-cho-sai-pham-bang-tai-nang-185250724101540772.htm"
+    "https://vnexpress.net/dien-vien-hai-huu-tin-su-dung-ma-tuy-vi-to-mo-4599355.html",
+    "https://vnexpress.net/45-phut-nhet-toi-hai-chet-co-gai-cua-ca-si-chau-viet-cuong-3891975.html"
 ]
 
 

@@ -42,6 +42,52 @@ def convert_legal_docs():
                 print(f"  [ERROR] Failed to convert {filepath.name}: {e}")
 
 
+import re
+
+def clean_markdown_noise(content: str) -> str:
+    """Loại bỏ các thành phần menu, điều hướng, javascript, và chia sẻ gây nhiễu."""
+    # 1. Loại bỏ các link chứa javascript:
+    content = re.sub(r'\[[^\]]*\]\(javascript:[^)]*\)', '', content)
+    
+    # 2. Loại bỏ các link trống (không có hiển thị chữ)
+    content = re.sub(r'\[\s*\]\([^)]*\)', '', content)
+    
+    # 3. Loại bỏ các dòng điều hướng, danh sách menu, chia sẻ, bình luận
+    lines = content.split('\n')
+    cleaned_lines = []
+    
+    started = False
+    for line in lines:
+        stripped = line.strip()
+        
+        # Nhận diện phần tiêu đề chính để bắt đầu lấy nội dung bài viết
+        if not started:
+            if stripped.startswith('#') and '![' not in stripped and 'logo' not in stripped.lower():
+                started = True
+            else:
+                continue # Bỏ qua mọi phần menu đầu trang
+                
+        # Bỏ qua các dòng chỉ chứa dấu đầu dòng trống hoặc các nút rác
+        if stripped in ('*', '-', '+', '* .', '- .', '[]', '* []', '- []', '* [ ]', '- [ ]'):
+            continue
+            
+        # Bỏ qua các dòng điều hướng quay lại chuyên mục, chia sẻ mạng xã hội hoặc bình luận
+        if any(keyword in stripped for keyword in ("Trở lại", "Chia sẻ", "Bình luận", "Xem thêm", "Tin liên quan")):
+            continue
+            
+        # Bỏ qua các ký tự nút đóng hoặc ký hiệu rác cuối trang
+        if stripped in ('×', '!', 'Mail', 'Zalo', 'Facebook', 'Twitter', 'LinkedIn'):
+            continue
+            
+        cleaned_lines.append(line)
+        
+    content = '\n'.join(cleaned_lines)
+    
+    # 4. Thu gọn nhiều dòng trống liên tiếp thành tối đa 2 dòng trống
+    content = re.sub(r'\n{3,}', '\n\n', content)
+    return content.strip()
+
+
 def convert_news_articles():
     """Convert JSON crawled articles trong data/landing/news/ sang markdown."""
     news_dir = LANDING_DIR / "news"
@@ -60,7 +106,9 @@ def convert_news_articles():
                 header += f"**Source:** {data.get('url', 'N/A')}\n"
                 header += f"**Crawled:** {data.get('date_crawled', 'N/A')}\n\n---\n\n"
 
-                content = header + data.get("content_markdown", "")
+                # Làm sạch markdown trước khi lưu
+                cleaned_content = clean_markdown_noise(data.get("content_markdown", ""))
+                content = header + cleaned_content
                 output_path.write_text(content, encoding="utf-8")
                 print(f"  [OK] Saved: {output_path.name}")
             except Exception as e:
